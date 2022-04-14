@@ -6,7 +6,6 @@ import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.RectF
 import android.graphics.Typeface
-import android.os.Build
 import android.os.Parcelable
 import android.util.AttributeSet
 import android.view.MotionEvent
@@ -28,8 +27,9 @@ class WeekView @JvmOverloads constructor(
     private val viewState: ViewState by lazy {
         ViewStateFactory.create(context, attrs)
     }
-
-    var beginWeekCalendar: Calendar ? = null
+    @PublicApi
+    var beginWeekCalendar: Calendar?= null
+        get() = field
         set(value) {
             field = value
             invalidate()
@@ -76,7 +76,7 @@ class WeekView @JvmOverloads constructor(
     private val renderers: List<Renderer> = listOf(
         TimeColumnRenderer(viewState),
         CalendarRenderer(viewState, eventChipsCacheProvider),
-        HeaderRenderer(context, viewState, eventChipsCacheProvider, onHeaderHeightChanged = this::invalidate, beginWeekCalendar = beginWeekCalendar)
+        HeaderRenderer(context, viewState, eventChipsCacheProvider, onHeaderHeightChanged = this::invalidate, beginWeekCalendar = this.beginWeekCalendar)
     )
 
     // We use width and height instead of view.isLaidOut(), because the latter seems to
@@ -312,7 +312,6 @@ class WeekView @JvmOverloads constructor(
     var headerBottomShadowColor: Int
         @RequiresApi(api = 29)
         get() = viewState.headerBackgroundWithShadowPaint.shadowLayerColor
-        @RequiresApi(Build.VERSION_CODES.Q)
         set(value) {
             val paint = viewState.headerBackgroundWithShadowPaint
             paint.setShadowLayer(headerBottomShadowRadius.toFloat(), 0f, 0f, value)
@@ -326,7 +325,6 @@ class WeekView @JvmOverloads constructor(
     var headerBottomShadowRadius: Int
         @RequiresApi(api = 29)
         get() = viewState.headerBackgroundWithShadowPaint.shadowLayerRadius.roundToInt()
-        @RequiresApi(Build.VERSION_CODES.Q)
         set(value) {
             val paint = viewState.headerBackgroundWithShadowPaint
             paint.setShadowLayer(value.toFloat(), 0f, 0f, headerBottomShadowColor)
