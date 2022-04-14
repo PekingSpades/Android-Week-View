@@ -6,26 +6,24 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
-import android.os.Build
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.util.SparseArray
-import androidx.annotation.RequiresApi
 import androidx.collection.ArrayMap
 import androidx.core.content.ContextCompat
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
-import java.util.Calendar
+import java.util.*
 import kotlin.math.roundToInt
 
 internal class HeaderRenderer(
     context: Context,
     viewState: ViewState,
     eventChipsCacheProvider: EventChipsCacheProvider,
-    beginWeekCalendar: Calendar? = null,
-    onHeaderHeightChanged: () -> Unit
+    onHeaderHeightChanged: () -> Unit,
+    private var beginWeekCalendar: Calendar? = null
 ) : Renderer, DateFormatterDependent {
 
     private val allDayEventLabels = ArrayMap<EventChip, StaticLayout>()
@@ -56,7 +54,7 @@ internal class HeaderRenderer(
     private val headerDrawer = HeaderDrawer(
         context = context,
         viewState = viewState,
-        beginWeekCalendar = beginWeekCalendar
+        beginWeekCalendar = this.beginWeekCalendar
     )
 
     override fun onSizeChanged(width: Int, height: Int) {
@@ -69,7 +67,6 @@ internal class HeaderRenderer(
         dateLabelLayouts.clear()
     }
 
-    @RequiresApi(Build.VERSION_CODES.O)
     override fun render(canvas: Canvas) {
         eventsUpdater.update()
         headerUpdater.update()
@@ -183,8 +180,7 @@ private class AllDayEventsUpdater(
         get() {
             val didScrollHorizontally = previousHorizontalOrigin != viewState.currentOrigin.x
             val dateRange = viewState.dateRange
-            val eventChips =
-                eventChipsCacheProvider()?.allDayEventChipsInDateRange(dateRange).orEmpty()
+            val eventChips = eventChipsCacheProvider()?.allDayEventChipsInDateRange(dateRange).orEmpty()
             val containsNewChips = eventChips.any { it.bounds.isEmpty }
             return didScrollHorizontally || containsNewChips
         }
@@ -317,7 +313,10 @@ internal class AllDayEventsDrawer(
             priorEventChip.bounds.right - viewState.eventPaddingHorizontal.toFloat()
         }
 
-        val y = priorEventChip.bounds.bottom + viewState.eventMarginVertical + viewState.eventPaddingVertical + textPaint.textSize
+        val y = priorEventChip.bounds.bottom +
+            viewState.eventMarginVertical +
+            viewState.eventPaddingVertical +
+            textPaint.textSize
 
         drawText(text, x, y, textPaint)
     }
@@ -326,7 +325,7 @@ internal class AllDayEventsDrawer(
 private class HeaderDrawer(
     context: Context,
     private val viewState: ViewState,
-    private val beginWeekCalendar: Calendar? = null
+    private val beginWeekCalendar: Calendar?
 ) : Drawer {
 
     private val upArrow: Drawable by lazy {
@@ -337,7 +336,6 @@ private class HeaderDrawer(
         checkNotNull(ContextCompat.getDrawable(context, R.drawable.ic_arrow_down))
     }
 
-    @RequiresApi(Build.VERSION_CODES.O)
     override fun draw(canvas: Canvas) {
         val width = viewState.viewWidth.toFloat()
 
@@ -363,8 +361,7 @@ private class HeaderDrawer(
         }
     }
 
-    @RequiresApi(Build.VERSION_CODES.O)
-    private fun Canvas.drawWeekNumber(beginWeekCalendar: Calendar?) {
+    private fun Canvas.drawWeekNumber(beginWeekCalendar : Calendar ? = null) {
 
         var weekNumber = viewState.dateRange.first().weekOfYear.toString()
         // 自己适配周数
@@ -393,12 +390,9 @@ private class HeaderDrawer(
                     set(Calendar.YEAR, get(Calendar.YEAR) - 1)
                 }
             }
-            val d1i: Instant = Instant.ofEpochMilli(begin2.getTimeInMillis())
-            val d2i: Instant = Instant.ofEpochMilli(now.getTimeInMillis())
 
-            val startDate: LocalDateTime = LocalDateTime.ofInstant(d1i, ZoneId.systemDefault())
-            val endDate: LocalDateTime = LocalDateTime.ofInstant(d2i, ZoneId.systemDefault())
-            var i: Int = (ChronoUnit.DAYS.between(startDate, endDate) / 7).toInt() + 1
+            val between_days: Long = (now.timeInMillis - begin2.timeInMillis) / (1000 * 3600 * 24)
+            var i: Int = (between_days / 7).toInt() + 1
             weekNumber = i.toString()
         }
 
@@ -426,6 +420,7 @@ private class HeaderDrawer(
 
         drawText(weekNumber, bounds.centerX(), bounds.centerY() + textOffset, textPaint)
     }
+
 
     private fun Canvas.drawAllDayEventsToggleArrow() = with(viewState) {
         val bottom = (headerHeight - headerPadding).roundToInt()
