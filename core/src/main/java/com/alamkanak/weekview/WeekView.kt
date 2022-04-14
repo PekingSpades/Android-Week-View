@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.os.Build
 import android.os.Parcelable
 import android.util.AttributeSet
 import android.view.MotionEvent
@@ -14,7 +15,7 @@ import android.view.accessibility.AccessibilityManager
 import androidx.annotation.RequiresApi
 import androidx.core.view.ViewCompat
 import java.util.Calendar
-import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -28,7 +29,12 @@ class WeekView @JvmOverloads constructor(
         ViewStateFactory.create(context, attrs)
     }
 
-    private val eventsCacheProvider: EventsCacheProvider = { adapter?.eventsCache }
+    var beginWeekCalendar: Calendar ? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     private val eventChipsCacheProvider: EventChipsCacheProvider = { adapter?.eventChipsCache }
 
     private val touchHandler = WeekViewTouchHandler(viewState)
@@ -42,13 +48,8 @@ class WeekView @JvmOverloads constructor(
             notifyRangeChangedListener()
         }
 
-        override fun onVerticalScrollPositionChanged(distance: Float) {
-            notifyVerticalScrollChanged(distance)
+        override fun onVerticalScrollPositionChanged() {
             invalidate()
-        }
-
-        override fun onVerticalScrollingFinished() {
-            notifyVerticalScrollFinished()
         }
 
         override fun requestInvalidation() {
@@ -58,21 +59,11 @@ class WeekView @JvmOverloads constructor(
 
     private val navigator = Navigator(viewState = viewState, listener = navigationListener)
 
-    private val dragHandler = DragHandler(
-        viewState = viewState,
-        touchHandler = touchHandler,
-        navigator = navigator,
-        dragListener = { id -> adapter?.handleDragAndDrop(id) },
-        eventsCacheProvider = eventsCacheProvider,
-        eventsProcessorProvider = { adapter?.eventsProcessor },
-    )
-
     private val gestureHandler = WeekViewGestureHandler(
         context = context,
         viewState = viewState,
         touchHandler = touchHandler,
-        navigator = navigator,
-        dragHandler = dragHandler,
+        navigator = navigator
     )
 
     private var accessibilityTouchHelper = WeekViewAccessibilityTouchHelper(
@@ -85,7 +76,7 @@ class WeekView @JvmOverloads constructor(
     private val renderers: List<Renderer> = listOf(
         TimeColumnRenderer(viewState),
         CalendarRenderer(viewState, eventChipsCacheProvider),
-        HeaderRenderer(context, viewState, eventChipsCacheProvider, onHeaderHeightChanged = this::invalidate)
+        HeaderRenderer(context, viewState, eventChipsCacheProvider, onHeaderHeightChanged = this::invalidate, beginWeekCalendar = beginWeekCalendar)
     )
 
     // We use width and height instead of view.isLaidOut(), because the latter seems to
@@ -106,7 +97,7 @@ class WeekView @JvmOverloads constructor(
             ViewCompat.setAccessibilityDelegate(this, accessibilityTouchHelper)
         }
 
-        setLayerType(LAYER_TYPE_HARDWARE, null)
+        setLayerType(LAYER_TYPE_SOFTWARE, null)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -195,26 +186,13 @@ class WeekView @JvmOverloads constructor(
         val didFirstVisibleDateChange = !currentFirstVisibleDate.isSameDate(newFirstVisibleDate)
         viewState.firstVisibleDate = newFirstVisibleDate
 
-        if (didFirstVisibleDateChange) {
+        if (didFirstVisibleDateChange && navigator.isNotRunning) {
             val newLastVisibleDate = newDateRange.last()
             adapter?.onRangeChanged(
                 firstVisibleDate = newFirstVisibleDate,
                 lastVisibleDate = newLastVisibleDate
             )
         }
-    }
-
-    private fun notifyVerticalScrollChanged(distance: Float) {
-        if (abs(distance) >= 1f) {
-            adapter?.onVerticalScrollPositionChanged(
-                currentOffset = verticalScrollOffset,
-                distance = distance
-            )
-        }
-    }
-
-    private fun notifyVerticalScrollFinished() {
-        adapter?.onVerticalScrollFinished(currentOffset = verticalScrollOffset)
     }
 
     /*
@@ -248,29 +226,11 @@ class WeekView @JvmOverloads constructor(
      * Returns whether the first day of the week should be displayed at the start position
      * when WeekView is rendered for the first time.
      */
-    @Deprecated(
-        message = "Use stickToWeekInWeekView instead.",
-        replaceWith = ReplaceWith(expression = "stickToWeekInWeekView"),
-        level = DeprecationLevel.ERROR,
-    )
     @PublicApi
     var showFirstDayOfWeekFirst: Boolean
         get() = viewState.showFirstDayOfWeekFirst
         set(value) {
             viewState.showFirstDayOfWeekFirst = value
-        }
-
-    /**
-     * Returns whether weeks should always be scrolled as a whole when showing a week view, meaning
-     * that the [firstVisibleDate] will actually be the first date of the currently displayed week
-     * (as per [Calendar.getFirstDayOfWeek]). If not, any day of the week can be the
-     * [firstVisibleDate].
-     */
-    @PublicApi
-    var stickToActualWeek: Boolean
-        get() = viewState.stickToActualWeek
-        set(value) {
-            viewState.stickToActualWeek = value
         }
 
     /**
@@ -352,6 +312,7 @@ class WeekView @JvmOverloads constructor(
     var headerBottomShadowColor: Int
         @RequiresApi(api = 29)
         get() = viewState.headerBackgroundWithShadowPaint.shadowLayerColor
+        @RequiresApi(Build.VERSION_CODES.Q)
         set(value) {
             val paint = viewState.headerBackgroundWithShadowPaint
             paint.setShadowLayer(headerBottomShadowRadius.toFloat(), 0f, 0f, value)
@@ -365,6 +326,7 @@ class WeekView @JvmOverloads constructor(
     var headerBottomShadowRadius: Int
         @RequiresApi(api = 29)
         get() = viewState.headerBackgroundWithShadowPaint.shadowLayerRadius.roundToInt()
+        @RequiresApi(Build.VERSION_CODES.Q)
         set(value) {
             val paint = viewState.headerBackgroundWithShadowPaint
             paint.setShadowLayer(value.toFloat(), 0f, 0f, headerBottomShadowColor)
@@ -1144,6 +1106,35 @@ class WeekView @JvmOverloads constructor(
      */
 
     /**
+     * Returns the scrolling speed factor in horizontal direction.
+     */
+    @PublicApi
+    @Deprecated(
+        message = "This value is no longer being taken into account.",
+        level = DeprecationLevel.ERROR
+    )
+    var xScrollingSpeed: Float
+        get() = viewState.xScrollingSpeed
+        set(value) {
+            viewState.xScrollingSpeed = value
+        }
+
+    /**
+     * Returns whether WeekView can fling horizontally.
+     */
+    @PublicApi
+    @Deprecated(
+        message = "Use isHorizontalScrollingEnabled instead.",
+        replaceWith = ReplaceWith("isHorizontalScrollingEnabled"),
+        level = DeprecationLevel.ERROR
+    )
+    var isHorizontalFlingEnabled: Boolean
+        get() = viewState.horizontalFlingEnabled
+        set(value) {
+            viewState.horizontalFlingEnabled = value
+        }
+
+    /**
      * Returns whether WeekView can scroll horizontally.
      */
     @PublicApi
@@ -1151,6 +1142,31 @@ class WeekView @JvmOverloads constructor(
         get() = viewState.horizontalScrollingEnabled
         set(value) {
             viewState.horizontalScrollingEnabled = value
+        }
+
+    /**
+     * Returns whether WeekView can fling vertically.
+     */
+    @Deprecated(
+        message = "This value is no longer being taken into account.",
+        level = DeprecationLevel.ERROR
+    )
+    @PublicApi
+    var isVerticalFlingEnabled: Boolean
+        get() = viewState.verticalFlingEnabled
+        set(value) {
+            viewState.verticalFlingEnabled = value
+        }
+
+    @PublicApi
+    @Deprecated(
+        message = "This value is no longer being taken into account.",
+        level = DeprecationLevel.ERROR
+    )
+    var scrollDuration: Int
+        get() = viewState.scrollDuration
+        set(value) {
+            viewState.scrollDuration = value
         }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -1242,6 +1258,51 @@ class WeekView @JvmOverloads constructor(
         navigator.scrollVerticallyTo(offset = finalOffset)
     }
 
+    /**
+     * Scrolls to the current date.
+     */
+    @Deprecated(
+        message = "This method will be removed in a future release. Use scrollToDate() instead.",
+        replaceWith = ReplaceWith(expression = "scrollToDate"),
+        level = DeprecationLevel.ERROR
+    )
+    @PublicApi
+    fun goToToday() {
+        scrollToDate(today())
+    }
+
+    /**
+     * Scrolls to the current date and time.
+     */
+    @Deprecated(
+        message = "This method will be removed in a future release. Use scrollToDateTime() instead.",
+        replaceWith = ReplaceWith(expression = "scrollToDateTime"),
+        level = DeprecationLevel.ERROR
+    )
+    @PublicApi
+    fun goToCurrentTime() {
+        internalScrollToDate(
+            date = now(),
+            onComplete = { scrollToTime(hour = it.hour, minute = it.minute) }
+        )
+    }
+
+    /**
+     * Scrolls to a specific date. If the date is before [minDate] or after [maxDate], [WeekView]
+     * will scroll to them instead.
+     *
+     * @param date The date to show.
+     */
+    @Deprecated(
+        message = "This method will be removed in a future release. Use scrollToDate() instead.",
+        replaceWith = ReplaceWith(expression = "scrollToDate"),
+        level = DeprecationLevel.ERROR
+    )
+    @PublicApi
+    fun goToDate(date: Calendar) {
+        scrollToDate(date)
+    }
+
     private fun internalScrollToDate(date: Calendar, onComplete: (Calendar) -> Unit = {}) {
         val adjustedDate = viewState.getStartDateInAllowedRange(date)
         if (adjustedDate.toEpochDays() == viewState.firstVisibleDate.toEpochDays()) {
@@ -1258,9 +1319,23 @@ class WeekView @JvmOverloads constructor(
             return
         }
 
-        navigator.scrollHorizontallyTo(date = adjustedDate) {
-            onComplete(adjustedDate)
-        }
+        navigator.scrollHorizontallyTo(date = date, onFinished = { onComplete(adjustedDate) })
+    }
+
+    /**
+     * Scrolls to a specific hour. If the hour is before [minHour] or after [maxHour], [WeekView]
+     * will scroll to them instead.
+     *
+     * @param hour The hour to scroll to, in 24-hour format. Supported values are 0-24.
+     */
+    @Deprecated(
+        message = "This method will be removed in a future release. Use scrollToTime() instead.",
+        replaceWith = ReplaceWith(expression = "scrollToTime"),
+        level = DeprecationLevel.ERROR
+    )
+    @PublicApi
+    fun goToHour(hour: Int) {
+        scrollToTime(hour = hour, minute = 0)
     }
 
     /**
@@ -1268,40 +1343,14 @@ class WeekView @JvmOverloads constructor(
      */
     @PublicApi
     val firstVisibleHour: Int
-        get() = viewState.firstVisibleHour
+        get() = viewState.minHour + (viewState.currentOrigin.y * -1 / viewState.hourHeight).toInt()
 
     /**
      * Returns the first hour that is fully visible on the screen.
      */
     @PublicApi
     val firstFullyVisibleHour: Int
-        get() = viewState.firstFullyVisibleHour
-
-    /**
-     * Returns the last hour that is visible on the screen.
-     */
-    @PublicApi
-    val lastVisibleHour: Int
-        get() = viewState.lastVisibleHour
-
-    /**
-     * Returns the last hour that is fully visible on the screen.
-     */
-    @PublicApi
-    val lastFullyVisibleHour: Int
-        get() = viewState.lastFullyVisibleHour
-
-    /**
-     * Returns the current vertical offset (in pixels) from the top. This is 0 if WeekView is
-     * scrolled up all the way to [minHour].
-     */
-    @PublicApi
-    val verticalScrollOffset: Float
-        get() {
-            // Invert the current origin, as it feels more natural
-            // to have a positive verticalScrollOffset.
-            return viewState.currentOrigin.y * -1
-        }
+        get() = viewState.minHour + ceil(viewState.currentOrigin.y * -1 / viewState.hourHeight).toInt()
 
     /*
      ***********************************************************************************************
@@ -1344,6 +1393,22 @@ class WeekView @JvmOverloads constructor(
         adapter?.registerObserver(this)
         invalidate()
     }
+
+    @PublicApi
+    @Deprecated(
+        message = "Use setDateFormatter() and setTimeFormatter() instead.",
+        level = DeprecationLevel.ERROR
+    )
+    var dateTimeInterpreter: DateTimeInterpreter
+        get() = object : DateTimeInterpreter {
+            override fun interpretDate(date: Calendar): String = viewState.dateFormatter(date)
+            override fun interpretTime(hour: Int): String = viewState.timeFormatter(hour)
+        }
+        set(value) {
+            setDateFormatter { value.interpretDate(it) }
+            setTimeFormatter { value.interpretTime(it) }
+            invalidate()
+        }
 
     @PublicApi
     fun setDateFormatter(formatter: DateFormatter) {
@@ -1404,16 +1469,22 @@ class WeekView @JvmOverloads constructor(
 
         internal fun handleClick(x: Float, y: Float): Boolean {
             val eventChip = findHitEvent(x, y) ?: return false
-            val data = findEventData(id = eventChip.eventId) ?: return false
+            val data = findEventData(id = eventChip.originalEvent.id) ?: return false
+
+            onEventClick(data)
             onEventClick(data, eventChip.bounds)
+
             return true
         }
 
-        internal fun handleLongClick(x: Float, y: Float): LongClickResult? {
-            val eventChip = findHitEvent(x, y) ?: return null
-            val data = findEventData(id = eventChip.eventId) ?: return null
-            val handled = onEventLongClick(data, eventChip.bounds)
-            return LongClickResult(eventChip = eventChip, handled = handled)
+        internal fun handleLongClick(x: Float, y: Float): Boolean {
+            val eventChip = findHitEvent(x, y) ?: return false
+            val data = findEventData(id = eventChip.originalEvent.id) ?: return false
+
+            onEventLongClick(data)
+            onEventLongClick(data, eventChip.bounds)
+
+            return true
         }
 
         private fun findHitEvent(x: Float, y: Float): EventChip? {
@@ -1437,11 +1508,13 @@ class WeekView @JvmOverloads constructor(
 
         internal fun onEventClick(id: Long, bounds: RectF) {
             val data = findEventData(id) ?: return
+            onEventClick(data)
             onEventClick(data, bounds)
         }
 
-        internal fun handleLongClick(id: Long, bounds: RectF) {
+        internal fun onEventLongClick(id: Long, bounds: RectF) {
             val data = findEventData(id) ?: return
+            onEventLongClick(data)
             onEventLongClick(data, bounds)
         }
 
@@ -1459,7 +1532,11 @@ class WeekView @JvmOverloads constructor(
          * @param item The item of type [T] that was submitted to [WeekView]
          * @return A [WeekViewEntity] that will be rendered in [WeekView]
          */
-        abstract fun onCreateEntity(item: T): WeekViewEntity
+        open fun onCreateEntity(item: T): WeekViewEntity {
+            throw RuntimeException(
+                "You called submitList() on WeekView's adapter, but didn't implement onCreateEntity()."
+            )
+        }
 
         /**
          * Returns the data of the [WeekViewEntity.Event] that the user clicked on.
@@ -1490,31 +1567,8 @@ class WeekView @JvmOverloads constructor(
          *
          * @param data The data of the [WeekViewEntity.Event]
          * @param bounds The [RectF] representing the bounds of the event's [EventChip]
-         * @return Whether the long click has been handled. If false, this will trigger drag-&-drop
-         *         to activate.
          */
-        open fun onEventLongClick(data: T, bounds: RectF): Boolean = false
-
-        internal fun handleDragAndDrop(id: Long) {
-            val data = findEventData(id) ?: return
-            val match = eventsCache[id] ?: return
-
-            onDragAndDropFinished(
-                data = data,
-                newStartTime = match.startTime,
-                newEndTime = match.endTime,
-            )
-        }
-
-        /**
-         * Called when a drag-&-drop gesture has finished to inform the caller of the dragged event's
-         * new start and end time.
-         *
-         * @param data The [T] entity that is associated with the dragged event
-         * @param newStartTime The new start time that the event was dragged to
-         * @param newEndTime THe new end time that the event was dragged to
-         */
-        open fun onDragAndDropFinished(data: T, newStartTime: Calendar, newEndTime: Calendar) = Unit
+        open fun onEventLongClick(data: T, bounds: RectF) = Unit
 
         /**
          * Returns the date and time of the location that the user clicked on.
@@ -1539,23 +1593,6 @@ class WeekView @JvmOverloads constructor(
          * @param lastVisibleDate A [Calendar] representing the last visible date
          */
         open fun onRangeChanged(firstVisibleDate: Calendar, lastVisibleDate: Calendar) = Unit
-
-        /**
-         * Called whenever the vertical scroll position in [WeekView] changes. A [distance] > 0
-         * indicates that the user is scrolling down towards later hours; a [distance] < 0 that the
-         * user is scrolling up towards earlier hours.
-         *
-         * @param currentOffset The current vertical offset.
-         * @param distance The distance that the user scrolled vertically.
-         */
-        open fun onVerticalScrollPositionChanged(currentOffset: Float, distance: Float) = Unit
-
-        /**
-         * Called when the vertical scrolling in [WeekView] finished.
-         *
-         * @param currentOffset The current vertical offset.
-         */
-        open fun onVerticalScrollFinished(currentOffset: Float) = Unit
     }
 
     /**
@@ -1571,6 +1608,25 @@ class WeekView @JvmOverloads constructor(
     abstract class SimpleAdapter<T> : Adapter<T>() {
 
         override val eventsCache = SimpleEventsCache()
+
+        /**
+         * Submits a new list of [WeekViewDisplayable] elements to the adapter. These events are
+         * processed on a background thread and then presented in [WeekView]. Previously submitted
+         * events are replaced completely.
+         *
+         * @param events The [WeekViewDisplayable] elements that are to be displayed in [WeekView]
+         */
+        @PublicApi
+        @Deprecated(
+            message = "Use submitList() to submit a list of elements of type T instead. Then, overwrite the adapter's onCreateEntity() method to create a WeekViewEntity.",
+            replaceWith = ReplaceWith(expression = "submitList"),
+            level = DeprecationLevel.ERROR
+        )
+        fun submit(events: List<WeekViewDisplayable<T>>) {
+            val viewState = weekView?.viewState ?: return
+            val entities = events.map { it.toWeekViewEntity(context) }
+            eventsProcessor.submit(entities, viewState, onFinished = this::updateObserver)
+        }
 
         /**
          * Submits a new list of elements to the adapter. These events are processed on a background
@@ -1604,6 +1660,24 @@ class WeekView @JvmOverloads constructor(
     abstract class PagingAdapter<T> : Adapter<T>() {
 
         override val eventsCache = PaginatedEventsCache()
+
+        /**
+         * Submits a new list of [WeekViewDisplayable] elements to the adapter. These events are
+         * processed on a background thread and then presented in [WeekView].
+         *
+         * @param events The [WeekViewDisplayable] elements that are to be displayed in [WeekView]
+         */
+        @PublicApi
+        @Deprecated(
+            message = "Use submitList() to submit a list of elements of type T instead. Then, overwrite the adapter's onCreateEntity() method to create a WeekViewEntity.",
+            replaceWith = ReplaceWith(expression = "submitList"),
+            level = DeprecationLevel.ERROR
+        )
+        fun submit(events: List<WeekViewDisplayable<T>>) {
+            val viewState = weekView?.viewState ?: return
+            val entities = events.map { it.toWeekViewEntity(context) }
+            eventsProcessor.submit(entities, viewState, onFinished = this::updateObserver)
+        }
 
         /**
          * Submits a new list of elements of type [T] to the adapter. These events are processed on
